@@ -35,12 +35,6 @@ minArea = 100 #for other detection functions
 #Initialize variables to return through network tables
 #What all should go here?
 
-#Initialize variables for general purpose use
-targetX = 0
-targetY = 0
-targetW = 0
-targetH = 0
-
 #Define program control flags
 writeVideo = False
 
@@ -128,9 +122,9 @@ def detect_ball_target(imgRaw):
 def detect_floor_tape(imgRaw):
     
     #Define constraints for detecting floor tape
-    floorTapeWidth = 2.0
-    floorTapeLength = 18.0
-    minTapeArea = 100
+    floorTapeWidth = 2.0 #in inches
+    floorTapeLength = 18.0 #in inches
+    minTapeArea = 100 #in square px, can be tweaked if needed
 
     #Define HSV range for white alignment tape
     tapeHSVMin = (0, 0, 68)
@@ -166,9 +160,9 @@ def detect_floor_tape(imgRaw):
 def detect_vision_targets(imgRaw):
 
     #Set constraints for detecting vision targets
-    visionTargetWidth = 3.313
-    visionTargetHeight = 5.826
-    minArea = 0
+    visionTargetWidth = 3.313 #in inches
+    visionTargetHeight = 5.826 #in inches
+    minArea = 0 #in square px
 
     #Define HSV range for cargo ship vision targets
     visionTargetHSVMin = (79, 91, 38)
@@ -188,31 +182,39 @@ def detect_vision_targets(imgRaw):
     
     inchesPerPixel = 0
     
-    #Loop over all contours to find valid targets based on color range 1
-    for testContour1 in contours:
+    #only continue if contours are found
+    if len(visionTargetContours) > 0:
+        
+        #Loop over all contours
+        for testContour1 in contours:
 
-        #Get bounding rectangle
-        x1, y1, w1, h1 = cv.boundingRect(testContour1)
+            #Get bounding rectangle dimensions
+            x1, y1, w1, h1 = cv.boundingRect(testContour1)
 
-        inchesPerPixel = visionTargetHeight/h1
+            #Create a conversion factor between inches and pixels with a known value (the target height)
+            inchesPerPixel = visionTargetHeight/h1
 
-        #Compare contour with other contours to find ones that are 
-        for testContour2 in contours:
+            #Compare contour with other contours to find ones that are 8 inches apart 
+            for testContour2 in contours:
 
-            #Get bounding rectangle
-            x2, y2, w2, h2 = cv.boundingRect(testContour2)
+                #Get bounding rectangle
+                x2, y2, w2, h2 = cv.boundingRect(testContour2)
 
-            diffTargets = x2 - (x1 + w1)
-            if diffTargets * inchesPerPixel > 7.9 and diffTargets * inchesPerPixel < 8.1:
-                targetX = x1
-                targetY = y1
-                targetW = w1 + w2 + diffTargets
-                targetH = max(h1, h2)
+                #Calculate the distance between the contours
+                diffTargets = x2 - (x1 + w1)
+                
+                #Check within a tolerance of the 8-inch known and set rectangle values properly
+                if diffTargets * inchesPerPixel > 7.9 and diffTargets * inchesPerPixel < 8.1:
+                    targetX = x1
+                    targetY = y1
+                    targetW = w1 + w2 + diffTargets
+                    targetH = max(h1, h2)
 
-        if targetW * targetH > minarea:
-    
-            #Draw rectangle on image
-            img_contours = cv.rectangle(img_raw,(targetX,targetY),(targetX+targetW,targetY+targetH),(0,0,255),1)
+            #if the area of the combined box is large enough, draw the rectangle on the screen
+            if targetW * targetH > minarea:
+
+                #Draw rectangle on image
+                img_contours = cv.rectangle(img_raw,(targetX,targetY),(targetX+targetW,targetY+targetH),(0,0,255),1)
 
             
 
