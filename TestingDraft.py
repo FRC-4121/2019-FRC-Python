@@ -15,6 +15,7 @@ import datetime
 import time
 import logging
 import argparse
+from operator import itemgetter
 import math
 import cscore as cs
 from cscore import CameraServer
@@ -23,10 +24,10 @@ from cscore import CameraServer
 logging.basicConfig(level=logging.DEBUG)
 
 #Initialize operating constants
-global imgWidth = 640  
-global imgHeight = 480
-global imgBrightness = .5
-global cameraFieldOfView = 27.3
+imgWidth = 640  
+imgHeight = 480
+imgBrightness = .5
+cameraFieldOfView = 27.3
 
 visionTargetWidth = 3.31
 visionTargetHeight = 5.82
@@ -54,7 +55,7 @@ def process_image(imgRaw, hsvMin, hsvMax):
     mask = cv.dilate(mask, None, iterations=2)
 
     #Find contours in mask
-    contours, hierarchy = cv.findContours(mask,cv.RETR_EXTERNAL,cv.CHAIN_APPROX_SIMPLE)
+    _, contours, _ = cv.findContours(mask,cv.RETR_EXTERNAL,cv.CHAIN_APPROX_SIMPLE)
 
     return contours
 
@@ -68,9 +69,11 @@ def detect_ball_target(imgRaw):
 
     #Define the lower and upper boundaries of the "green"
     #ball in the HSV color space
-    ballHSVMin = (63, 0, 87)
-    ballHSVMax = (108, 255, 255)
-
+    #ballHSVMin = (0, 99, 191)
+    #ballHSVMax = (21, 255, 255)
+    ballHSVMin = (0, 151, 19)
+    ballHSVMax = (9, 255, 255)
+   
     #Values to be returned
     targetRadius = 0 #px
     targetX = -1 #px
@@ -89,6 +92,12 @@ def detect_ball_target(imgRaw):
 
     #Only proceed if at least one contour was found
     if len(ballContours) > 0:
+
+##        for contour in ballContours:
+##            ((x, y), radius) = cv.minEnclosingCircle(contour)
+##            if radius > minRadius:
+##                cv.circle(imgRaw, (int(x), int(y)), int(radius), (0, 0, 255), 2)
+
         
         largestContour = max(ballContours, key=cv.contourArea)
         ((x, y), radius) = cv.minEnclosingCircle(largestContour)
@@ -104,8 +113,8 @@ def detect_ball_target(imgRaw):
         if targetRadius != 0:
             
             inches_per_pixel = ballRadius/targetRadius #set up a general conversion factor
-            distanceToBall = inches_per_pixel * (imgwidth / (2 * math.tan(math.radians(FOV_in_degrees))))
-            angleOffsetInInches = inches_per_pixel * (targetX - imgwidth / 2)
+            distanceToBall = inches_per_pixel * (imgWidth / (2 * math.tan(math.radians(cameraFieldOfView))))
+            angleOffsetInInches = inches_per_pixel * (targetX - imgWidth / 2)
             angleToBall = math.degrees(math.atan((angleOffsetInInches / distanceToBall)))
           
         else:
@@ -113,7 +122,7 @@ def detect_ball_target(imgRaw):
             distanceToBall = 0
             angleToBall = 0
 
-    #cv.circle(img, (int(targetX), int(targetY)), int(targetRadius), (0, 255, 0), 2)
+    cv.circle(imgRaw, (int(targetX), int(targetY)), int(targetRadius), (0, 255, 0), 2)
 
     return targetX, targetY, targetRadius, distanceToBall, angleToBall, foundBall
 
@@ -146,15 +155,15 @@ def detect_floor_tape(imgRaw):
         #find the largest contour and check it against the mininum tape area
         largestContour = max(tapeContours, key=cv.contourArea)
 
-        if largestContour.area > minTapeArea:
+        if cv.contourArea(largestContour) > minTapeArea:
             
             targetX, targetY, targetW, targetH = cv.boundingRect(largestContour)
             foundTape = True
 
-    #cv.rectangle(img,(targetX,targetY),(targetX+targetW,targetY+targetH),(100,0,255),1)
+    cv.rectangle(imgRaw,(targetX,targetY),(targetX+targetW,targetY+targetH),(100,0,255),1)
 
     return targetX, targetY, targetW, targetH, foundTape
-    
+
 
 #Define contour detector function
 def detect_vision_targets(imgRaw):
@@ -162,17 +171,26 @@ def detect_vision_targets(imgRaw):
     #Set constraints for detecting vision targets
     visionTargetWidth = 3.313 #in inches
     visionTargetHeight = 5.826 #in inches
-    minArea = 0 #in square px
+    minTargetArea = 750
+    minRegionArea = 3200 #in square px
 
     #Define HSV range for cargo ship vision targets
-    visionTargetHSVMin = (79, 91, 38)
-    visionTargetHSVMax = (96, 255, 255)
+    #values with light in Fab Lab
+    visionTargetHSVMin = (90, 0, 86)
+    visionTargetHSVMax = (124, 150, 248)
+    #values from image testing
+    #visionTargetHSVMin = (63, 0, 87)
+    #visionTargetHSVMax = (108, 255, 255)
+
+    visionTargetValues = []
+    visionTargetTupule = ('x1','y1','w1','h1')
     
     #Values to be returned
     targetH = -1
     targetW = -1
     targetX = -1
     targetY = -1
+    targetArea = -1
     distanceToVisionTarget = -1
     angleToVisionTarget = -1
     foundVisionTarget = False
@@ -181,42 +199,78 @@ def detect_vision_targets(imgRaw):
     visionTargetContours = process_image(imgRaw, visionTargetHSVMin, visionTargetHSVMax)
     
     inchesPerPixel = 0
+    diffTargets = 0
     
     #only continue if contours are found
     if len(visionTargetContours) > 0:
         
         #Loop over all contours
-        for testContour1 in contours:
+        for testContour1 in visionTargetContours:
 
             #Get bounding rectangle dimensions
             x1, y1, w1, h1 = cv.boundingRect(testContour1)
-
-            #Create a conversion factor between inches and pixels with a known value (the target height)
-            inchesPerPixel = visionTargetHeight/h1
-
-            #Compare contour with other contours to find ones that are 8 inches apart 
-            for testContour2 in contours:
-
-                #Get bounding rectangle
-                x2, y2, w2, h2 = cv.boundingRect(testContour2)
-
-                #Calculate the distance between the contours
-                diffTargets = x2 - (x1 + w1)
-                
-                #Check within a tolerance of the 8-inch known and set rectangle values properly
-                if diffTargets * inchesPerPixel > 7.9 and diffTargets * inchesPerPixel < 8.1:
-                    targetX = x1
-                    targetY = y1
-                    targetW = w1 + w2 + diffTargets
-                    targetH = max(h1, h2)
-
-            #if the area of the combined box is large enough, draw the rectangle on the screen
-            if targetW * targetH > minarea:
-
-                #Draw rectangle on image
-                img_contours = cv.rectangle(img_raw,(targetX,targetY),(targetX+targetW,targetY+targetH),(0,0,255),1)
-
             
+            if cv.contourArea(testContour1) > minTargetArea:
+
+                cv.rectangle(imgRaw,(x1,y1),(x1+w1,y1+h1),(0,0,255),2)
+                visionTargetTupule = (x1,y1,w1,h1)
+                visionTargetValues.append(visionTargetTupule)
+                
+                #Create a conversion factor between inches and pixels with a known value (the target height)
+                inchesPerPixel = visionTargetHeight/h1
+
+##                #Compare contour with other contours to find ones that are 8 inches apart 
+##                for testContour2 in visionTargetContours:
+##
+##                    #Get bounding rectangle
+##                    x2, y2, w2, h2 = cv.boundingRect(testContour2)
+##
+##                    #Calculate the distance between the contours
+##                    if x1 < x2:
+##                        diffTargets = x2 - (x1 + w1)
+##                    elif x2 < x1:
+##                        diffTargets = x1 - (x2 + w2)
+##                    else:
+##                        diffTargets = -1
+##                   
+##                    #Check within a tolerance of the 8-inch known and set rectangle values properly
+##                    if diffTargets * inchesPerPixel > 7.6 and diffTargets * inchesPerPixel < 8.4:
+##
+##                        if x2 <= x1:
+##                            targetX = x2
+##                        else:
+##                            targetX = x1
+##                        
+##                        targetY = min(y1, y2)
+##                        targetW = w1 + w2 + diffTargets
+##                        targetH = min(h1, h2)
+##                        targetArea = targetW * targetH
+                        #visionTarget
+
+        visionTargetValues.sort(key=itemgetter(0))
+        for x in range(len(visionTargetValues)-1):
+            diffTargets = visionTargetValues[x + 1][0] - visionTargetValues[x][0]
+            print(diffTargets)
+            if ((diffTargets * inchesPerPixel)>8):
+                print ('true')
+            else:
+                print ('false')
+            
+            
+                
+##            #if the distance between the targets are larger than 8 in, draw the rectangle
+##                if targetArea > minRegionArea:
+##
+##                        foundVisionTarget = True
+##                        
+##                        distanceToVisionTarget = inchesPerPixel * (imgWidth / (2 * math.tan(math.radians(cameraFieldOfView))))
+##                        angleOffsetInInches = inchesPerPixel * ((targetX + targetW/2) - imgWidth / 2)
+##                        angleToVisionTarget = math.degrees(math.atan((angleOffsetInInches / distanceToVisionTarget)))
+##
+##                        #Draw rectangle on image
+##                        #cv.rectangle(imgRaw,(targetX,targetY),(targetX+targetW+diffTargets,targetY+targetH),(0,255,0),2)
+##                        
+                
 
     ##Work in progress, needs to be cleaned somewhat.
 
@@ -237,7 +291,12 @@ def main():
     #Start capturing webcam video
     camera = camserv.startAutomaticCapture(dev=0, name="MainPICamera")
     camera.setResolution(imgWidth, imgHeight)
-    camera.setBrightness(imgBrightness)
+
+    #for prop in camera.enumerateProperties():
+        #print(prop.getName())
+
+    #print(camera.getBrightness())
+    camera.setBrightness(0)
 
     #Define video sink
     cvsink = camserv.getVideo()
@@ -271,23 +330,29 @@ def main():
     while (True):
 
         #Read in an image from 2019 Vision Images
-        #img = '2019VisionImages\CargoLine36in.jpg'
+        #img = cv.imread('RetroreflectiveTapeImages2019/CargoStraightDark90in.jpg')
+        #if img is None:
+        #    break
 
         #OR grab an image from a video feed
-        img = cvsink.grabFrame(img)
+        _, img = cvsink.grabFrame(img)
 
-        ballX, ballY, ballRadius, ballDistance, ballAngle, foundBall = detect_ball_target(img)
-        tapeX, tapeY, tapeW, tapeH, foundTape = detect_floor_tape(img)
+        #ballX, ballY, ballRadius, ballDistance, ballAngle, foundBall = detect_ball_target(img)
+        #tapeX, tapeY, tapeW, tapeH, foundTape = detect_floor_tape(img)
         visionTargetX, visionTargetY, visionTargetW, visionTargetH, visionTargetDistance, visionTargetAngle, foundVisionTarget = detect_vision_targets(img)
 
         #Network table updating to go here
 
         #Draw various contours on the image
-        cv.circle(img, (int(ballX), int(ballY)), int(ballRadius), (0, 255, 0), 2) #ball
-        cv.rectangle(img,(tapeX,tapeY),(tapeX+tapeW,tapeY+tapeH),(100,0,255),1) #floor tape
-        cv.rectangle(img,(visionTargetX,visionTargetY),(visionTargetX+visionTargetW,visionTargetY+visionTargetH),(100,0,255),1) #vision targets
+        #cv.circle(img, (int(ballX), int(ballY)), int(ballRadius), (0, 255, 0), 2) #ball
+        #cv.rectangle(img,(tapeX,tapeY),(tapeX+tapeW,tapeY+tapeH),(100,0,255),1) #floor tape
+        cv.rectangle(img,(visionTargetX,visionTargetY),(visionTargetX+visionTargetW,visionTargetY+visionTargetH),(0,255,0),2) #vision targets
+        cv.putText(img, 'Distance to Vision: %.2f' %visionTargetDistance, (10, 400), cv.FONT_HERSHEY_SIMPLEX, .75,(0, 255, 0), 2)
+        cv.putText(img, 'Angle to Vision: %.2f' %visionTargetAngle, (10, 440), cv.FONT_HERSHEY_SIMPLEX, .75,(0, 255, 0), 2)
+        #cv.putText(img, 'Distance to Ball: %.2f' %ballDistance, (10, 50), cv.FONT_HERSHEY_SIMPLEX, .75,(0, 255, 0), 2)
 
         #Check for stop code from robot
+        cv.imshow("Frame", img)
         if cv.waitKey(1) == 27:
             break
         #robotStop = visionTable.getNumber("RobotStop", 0)
