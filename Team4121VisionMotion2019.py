@@ -1,57 +1,50 @@
-#--------------------------------------------------#
-#         North Canton Hoover High School          #
-#                                                  #
-#          Team 4121 - Norsemen Robotics           #
-#                                                  #
-#         Vision & Motion Processing Code          #
-#--------------------------------------------------#
-#                                                  #
-#  This code continuously analyzes images from     #
-#  one or more USB cameras to identify on field    #
-#  game pieces and vision targets.  For game       #
-#  pieces, the code will identify all game         #
-#  pieces within the camera's field of view and    #
-#  determine the closest one.  The distance and    #
-#  angle to the closest game piece is calculated   #
-#  and made available to the main robot code       #
-#  through network tables.  The closest game piece #
-#  is highlighted with a green box while all other #
-#  found game pieces are highlighted with a red    #
-#  box.  The annotated video is streamed to the    #
-#  driver station for display.  The annotated      #
-#  video is also saved to a file for post game     #
-#  review and analysis.  For vision targets, the   #
-#  code will identify all vision targets and       #
-#  calculate the angle and distance to each one.   #
-#  Vision target information is made available to  #
-#  the main robot code through network tables.     #
-#                                                  #
-#  This code also continuously interrogates a      #
-#  VMX-Pi board to determine linear and angular    #
-#  motion in all three axes.  This information is  #
-#  made available to the main robot code through   #
-#  network tables.                                 #
-#                                                  #
-#--------------------------------------------------#
-#                                                  #
-#  Authors:  Jonas Muhlenkamp                      #
-#            Ricky Park                            #
-#            Tresor Nshimiye                       #
-#            Tim Fuller                            #
-#                                                  #
-#  Creation Date: 3/1/2018                         #
-#                                                  #
-#  Revision: 3.0                                   #
-#                                                  #
-#  Revision Date: 2/18/2019                        #
-#                                                  #
-#--------------------------------------------------#
+#----------------------------------------------------------------------------------------------#
+#                               North Canton Hoover High School                                #
+#                                                                                              #
+#                                Team 4121 - Norsemen Robotics                                 #
+#                                                                                              #
+#                               Vision & Motion Processing Code                                #
+#----------------------------------------------------------------------------------------------#
+#                                                                                              #
+#  This code continuously analyzes images from one or more USB cameras to identify on field    #
+#  game pieces and vision targets.  For game pieces, the code will identify all game pieces    #
+#  within the camera's field of view and determine the closest one.  The distance and angle    #
+#  to the closest game piece is calculated and made available to the main robot code through   #
+#  network tables.  The closest game piece is highlighted with a green box while all other     #
+#  found game pieces are highlighted with a red box.  The annotated video is streamed to the   #
+#  driver station for display.  The annotated video is also saved to a file for post game      #
+#  review and analysis.  For vision targets, the code will identify all vision targets and     #
+#  calculate the angle and distance to each one.  Vision target information is made available  #
+#  to the main robot code through network tables.                                              #
+#                                                                                              #
+#  This code also continuously interrogates a VMX-Pi board to determine linear and angular     #
+#  motion in all three axes.  This information is made available to the main robot code        #
+#  through network tables.                                                                     #
+#                                                                                              #
+#----------------------------------------------------------------------------------------------#
+#                                                                                              #
+#  Authors:  Jonas Muhlenkamp                                                                  #
+#            Ricky Park                                                                        #
+#            Tresor Nshimiye                                                                   #
+#            Tim Fuller                                                                        #
+#                                                                                              #
+#  Creation Date: 3/1/2018                                                                     #
+#                                                                                              #
+#  Revision: 3.0                                                                               #
+#                                                                                              #
+#  Revision Date: 2/18/2019                                                                    #
+#                                                                                              #
+#----------------------------------------------------------------------------------------------#
 
 #!/usr/bin/env python3
 
 #System imports
 import sys
 import imp
+
+#Setup paths
+sys.path.append('/home/pi/.local/lib/python3.5/site-packages')
+sys.path.append('/usr/local/lib/vmxpi/')
 
 #Module imports
 import cv2 as cv
@@ -71,8 +64,8 @@ from time import sleep
 logging.basicConfig(level=logging.DEBUG)
 
 #Initialize operating constants
-imgWidthVision = 640  
-imgHeightVision = 480
+imgWidthVision = 320  
+imgHeightVision = 240
 imgWidthDriver = 160
 imgHeightDriver = 120
 cameraFieldOfView = 27.3
@@ -111,15 +104,16 @@ def detect_ball_target(imgRaw):
 
     #Define the lower and upper boundaries of the "green"
     #ball in the HSV color space
-    ballHSVMin = (0, 115, 220)
-    ballHSVMax = (18, 255, 255)
+    ballHSVMin = (0, 192, 38)
+    ballHSVMax = (22, 255, 255)
    
     #Values to be returned
     targetRadius = 0 #px
     targetX = -1 #px
     targetY = -1 #px
     distanceToBall = -1 #inches
-    angleToBall = -1 #degrees
+    angleToBall = float('nan') #degrees
+    ballOffset = float('nan')
     screenPercent = -1
     foundBall = False;
 
@@ -152,13 +146,14 @@ def detect_ball_target(imgRaw):
             offsetInInches = inches_per_pixel * (targetX - imgWidthVision / 2)
             angleToBall = math.degrees(math.atan((offsetInInches / distanceToBall)))
             screenPercent = cv.contourArea(largestContour) / (imgWidthVision * imgHeightVision)
+            ballOffset = imgWidthVision/2 - targetX
           
         else:
             
             distanceToBall = -1
             angleToBall = float('nan')
 
-    return targetX, targetY, targetRadius, distanceToBall, angleToBall, screenPercent, foundBall
+    return targetX, targetY, targetRadius, distanceToBall, angleToBall, ballOffset, screenPercent, foundBall
 
     
 #Define floor alignment tape detection method
@@ -178,7 +173,7 @@ def detect_floor_tape(imgRaw):
     targetY = -1
     targetW = -1
     targetH = -1
-    centerOffset = -1
+    centerOffset = float('nan')
     foundTape = False
     
     #Find alignment tape in image
@@ -196,7 +191,7 @@ def detect_floor_tape(imgRaw):
             foundTape = True
 
             #calculate center offset of tape
-            centerOffset = (imgWidthVision / 2) - (tapeX + (tapeW / 2))
+            centerOffset = (imgWidthVision / 2) - (targetX + (targetW / 2))
 
     return targetX, targetY, targetW, targetH, centerOffset, foundTape
 
@@ -235,7 +230,7 @@ def detect_vision_targets(imgRaw):
     targetY = -1
     targetW = -1
     targetH = -1
-    #targetArea = -1
+    centerOffset = float('nan')
     distanceToVisionTarget = -1
     angleToVisionTarget = float('nan') #default set to not-a-number
     foundVisionTarget = False
@@ -253,7 +248,6 @@ def detect_vision_targets(imgRaw):
             x, y, w, h = cv.boundingRect(testContour)
             rect = cv.minAreaRect(testContour)
             a = rect[2]
-            #print (rect[2])
             box = cv.boxPoints(rect)
             box = np.int0(box)
             cv.drawContours(imgRaw,[box],0,(0,0,255),2)            
@@ -315,6 +309,8 @@ def detect_vision_targets(imgRaw):
                 targetW = visionRegionValues[0][3]
                 targetH = visionRegionValues[0][4]
 
+                centerOffset = (imgWidthVision / 2) - (targetX + (targetW / 2))
+
                 foundVisionTarget = True
                                 
                 distanceToVisionTarget = inchesPerPixel * (imgWidthVision / (2 * math.tan(math.radians(cameraFieldOfView))))
@@ -322,88 +318,115 @@ def detect_vision_targets(imgRaw):
                 angleToVisionTarget = math.degrees(math.atan((offsetInInches / distanceToVisionTarget)))
 
     #Return results
-    return targetX, targetY, targetW, targetH, distanceToVisionTarget, angleToVisionTarget, foundVisionTarget
+    return targetX, targetY, targetW, targetH, distanceToVisionTarget, angleToVisionTarget, centerOffset, foundVisionTarget
 
 
 #Define main processing function
 def main():
 
+    #Define global variables
     global imgWidthDriver
     global imgHeightDriver
     global imgWidthVision
     global imgHeightVision
     global framesPerSecond
 
-    #define local variables
+    #Define local variables
     driverCameraBrightness = 50
-    visionCameraBrightness = 25
+    visionCameraBrightness = 0
+
+    #Define local flags
+    networkTablesConnected = False
+    driverCameraConnected = False
+    visionCameraConnected = False
+    foundBall = False
+    foundTape = False
+    foundVisionTarget = False
 
     #Get current time as a string
     currentTime = time.localtime(time.time())
     timeString = str(currentTime.tm_year) + str(currentTime.tm_mon) + str(currentTime.tm_mday) + str(currentTime.tm_hour) + str(currentTime.tm_min)
 
-    #open a log file
+    #Open a log file
     logFilename = '/data/Logs/Run_Log_' + timeString + '.txt'
     log_file = open(logFilename, 'w')
     log_file.write('run started on %s.\n' % datetime.datetime.now())
     log_file.write('')
 
+    #Load VMX module
+    vmxpi = imp.load_source('vmxpi_hal_python', '/usr/local/lib/vmxpi/vmxpi_hal_python.py')
+    vmx = vmxpi.VMXPi(False,50)
+    if vmx.IsOpen() is False:
+        log_file.write('Error:  Unable to open VMX Client.\n')
+        log_file.write('\n')
+        log_file.write('        - Is pigpio (or the system resources it requires) in use by another process?\n')
+        log_file.write('        - Does this application have root privileges?')
+        log_file.close()
+        sys.exit(0)
+
     #Connect NetworkTables
-    #NetworkTables.initialize(server='10.41.21.2')
-    #visionTable = NetworkTables.getTable("vision")
-    #smartDash = NetworkTables.getTable("SmartDashboard")
+    try:
+        NetworkTables.initialize(server='10.41.21.2')
+        visionTable = NetworkTables.getTable("vision")
+        navxTable = NetworkTables.getTable("navx")
+        smartDash = NetworkTables.getTable("SmartDashboard")
+        networkTablesConnected = True
+        log_file.write('Connected to Networktables on 10.41.21.2 \n')
+    except:
+        log_file.write('Error:  Unable to connect to Network tables.\n')
+        log_file.write('Error message: ', sys.exec_info()[0])
+        log_file.write('\n')
+
+    #Navx configuration
+    navxTable.putNumber("ZeroGyro", 0)
+    #navxTable.putNumber("ZeroDisplace", 0)
+
+    #Reset yaw gyro
+    vmx.getAHRS().Reset()
+    vmx.getAHRS().ZeroYaw()
+
+    #Reset displacement
+    vmx.getAHRS().ResetDisplacement()
 
     #Set up a camera server
     camserv = CameraServer.getInstance()
     camserv.enableLogging
 
-    #Start capturing webcam video
-    driverCamera = camserv.startAutomaticCapture(dev=0, name = "DriverCamera")
-    driverCamera.setResolution(imgWidthDriver, imgHeightDriver)
-    driverCamera.setBrightness(driverCameraBrightness)
-    visionCamera = camserv.startAutomaticCapture(dev=1, name="VisionCamera")
-    visionCamera.setResolution(imgWidthVision, imgHeightVision)
-    visionCamera.setBrightness(visionCameraBrightness)
+    #Start capturing webcam videos
+    try:
+        driverCamera = camserv.startAutomaticCapture(dev=0, name = "DriverCamera")
+        driverCamera.setResolution(imgWidthDriver, imgHeightDriver)
+        driverCamera.setBrightness(driverCameraBrightness)
+        driverCameraConnected = True
+        log_file.write('Connected to driver camera on ID = 0.\n')
+    except:
+        log_file.write('Error:  Unable to connect to driver camera.\n')
+        log_file.write('Error message: ', sys.exec_info()[0])
+        log_file.write('\n')
+
+    try:    
+        visionCamera = camserv.startAutomaticCapture(dev=1, name="VisionCamera")
+        visionCamera.setResolution(imgWidthVision, imgHeightVision)
+        visionCamera.setBrightness(visionCameraBrightness)
+        visionCameraConnected = True
+    except:
+        log_file.write('Error:  Unable to connect to vision camera.\n')
+        log_file.write('Error message: ', sys.exec_info()[0])
+        log_file.write('\n')        
 
     #Define video sink
-    driverSink = camserv.getVideo(name = 'DriverCamera')
-    visionSink = camserv.getVideo(name = 'VisionCamera')
+    if driverCameraConnected == True:
+        driverSink = camserv.getVideo(name = 'DriverCamera')
+    if visionCameraConnected == True:
+        visionSink = camserv.getVideo(name = 'VisionCamera')
 
     #Create an output video stream
-    driverOutputStream = camserv.putVideo("MainCamera", imgWidthDriver, imgHeightDriver)
-
-    #Create blank image
-    imgDriver = np.zeros(shape=(imgWidthDriver, imgHeightDriver, 3), dtype = np.uint8)
-    imgVision = np.zeros(shape=(imgWidthVision, imgHeightVision, 3), dtype = np.uint8)
+    driverOutputStream = camserv.putVideo("DriveCamera", imgWidthDriver, imgHeightDriver)
 
     #Set video codec and create VideoWriter
     fourcc = cv.VideoWriter_fourcc(*'XVID')
     videoFilename = '/data/Match_Videos/RobotVisionCam-' + timeString + '.avi'
     visionImageOut = cv.VideoWriter(videoFilename,fourcc,20.0,(imgWidthVision,imgHeightVision))
-
-    #Create network table entries here
-##    ballX
-##    ballY
-##    ballRadius
-##    ballDistance
-##    ballAngle
-##    ballScreenPercent
-##    foundBall
-##
-##    tapeX
-##    tapeY
-##    tapeW
-##    tapeH
-##    tapeOffset
-##    foundTape
-##
-##    visionTargetX
-##    visionTargetY
-##    visionTargetW
-##    visionTargetH
-##    visionTargetDistance
-##    visionTargetAngle
-##    foundVisionTarget
 
     #Create blank image
     imgDriver= np.zeros(shape=(imgWidthDriver, imgHeightDriver, 3), dtype=np.uint8)
@@ -417,18 +440,25 @@ def main():
         #if img is None:
         #    break
 
+        #Initialize video time stamps
+        driverVideoTimestamp = 0
+        visionVideoTimestamp = 0
+        
         #Grab frames from the web cameras
-        driverVideoTimestamp, imgDriver = driverSink.grabFrame(imgDriver)
-        visionVideoTimestamp, imgVision = visionSink.grabFrame(imgVision)
+        if driverCameraConnected == True:
+            driverVideoTimestamp, imgDriver = driverSink.grabFrame(imgDriver)
+        if visionCameraConnected == True:
+            visionVideoTimestamp, imgVision = visionSink.grabFrame(imgVision)
 
         #Check for frame errors
         visionFrameGood = True
         if (driverVideoTimestamp == 0) or (visionVideoTimestamp == 0):
-            if driverVideoTimestamp == 0:
+            print(str(driverVideoTimestamp))
+            if (driverVideoTimestamp == 0) and (driverCameraConnected == True):
                 log_file.write('Driver video error: \n')
                 log_file.write(driverSink.getError())
                 log_file.write('\n')
-            else:
+            if (visionVideoTimestamp == 0) and (visionCameraConnected == True):
                 log_file.write('Vision video error: \n')
                 log_file.write(visionSink.getError())
                 log_file.write('\n')
@@ -437,45 +467,131 @@ def main():
             continue    
         
         if (visionFrameGood == True):
-            ballX, ballY, ballRadius, ballDistance, ballAngle, ballScreenPercent, foundBall = detect_ball_target(imgVision)
-            #tapeX, tapeY, tapeW, tapeH, tapeOffset, foundTape = detect_floor_tape(img)
-            #visionTargetX, visionTargetY, visionTargetW, visionTargetH, visionTargetDistance, visionTargetAngle, foundVisionTarget = detect_vision_targets(imgVision)
 
-            #Vision network table updating to go here
+            #Call detection methods
+            ballX, ballY, ballRadius, ballDistance, ballAngle, ballOffset, ballScreenPercent, foundBall = detect_ball_target(imgVision)
+            #tapeX, tapeY, tapeW, tapeH, tapeOffset, foundTape = detect_floor_tape(imgVision)
+            visionTargetX, visionTargetY, visionTargetW, visionTargetH, visionTargetDistance, visionTargetAngle, visionTargetOffset, foundVisionTarget = detect_vision_targets(imgVision)
+
+            #Update networktables and log file
+            if networkTablesConnected == True:
+
+                visionTable.putNumber("RobotStop", 0)
+                visionTable.putBoolean("WriteVideo", writeVideo)
+                
+                if foundBall == True:
+                    visionTable.putNumber("BallX", round(ballX, 2))
+                    visionTable.putNumber("BallY", round(ballY, 2))
+                    visionTable.putNumber("BallRadius", round(ballRadius, 2))
+                    visionTable.putNumber("BallDistance", round(ballDistance, 2))
+                    visionTable.putNumber("BallAngle", round(ballAngle, 2))
+                    visionTable.putNumber("BallOffset", round(ballOffset, 2))
+                    visionTable.putNumber("BallScreenPercent", round(ballScreenPercent, 2))
+                    visionTable.putBoolean("FoundBall", foundBall)
+                    log_file.write('Cargo found at %s.\n' % datetime.datetime.now())
+                    log_file.write('  Ball distance: %.2f \n' % round(ballDistance, 2))
+                    log_file.write('  Ball angle: %.2f \n' % round(ballAngle, 2))
+                    log_file.write('  Ball offset: %.2f \n' % round(ballOffset, 2))
+                    log_file.write('\n')
+
+                if foundTape == True:
+                    visionTable.putNumber("TapeX", round(tapeX, 2))
+                    visionTable.putNumber("TapeY", round(tapeY, 2))
+                    visionTable.putNumber("TapeW", round(tapeW, 2))
+                    visionTable.putNumber("TapeH", round(tapeH, 2))
+                    visionTable.putNumber("TapeOffset", round(tapeOffset, 2))
+                    visionTable.putBoolean("FoundTape", foundTape)
+                    log_file.write('Floor tape found at %s.\n' % datetime.datetime.now())
+                    log_file.write('  Tape offset: %.2f \n' % round(tapeOffset, 2))
+                    log_file.write('\n')
+
+                if foundVisionTarget == True:
+                    visionTable.putNumber("VisionTargetX", round(visionTargetX, 2))
+                    visionTable.putNumber("VisionTargetY", round(visionTargetY, 2))
+                    visionTable.putNumber("VisionTargetW", round(visionTargetW, 2))
+                    visionTable.putNumber("VisionTargetH", round(visionTargetH, 2))
+                    visionTable.putNumber("VisionTargetDistance", round(visionTargetDistance, 2))
+                    visionTable.putNumber("VisionTargetAngle", round(visionTargetAngle, 2))
+                    visionTable.putNumber("VisionTargetOffset", round(visionTargetOffset, 2))
+                    visionTable.putBoolean("FoundVisionTarget", foundVisionTarget)
+                    log_file.write('Vision target found at %s.\n' % datetime.datetime.now())
+                    log_file.write('  Vision target distance: %.2f \n' % round(visionTargetDistance, 2))
+                    log_file.write('  Vision target angle: %.2f \n' % round(visionTargetAngle, 2))
+                    log_file.write('  Vision target offset: %.2f \n' % round(visionTargetOffset, 2))
+                    log_file.write('\n')
 
             #Draw various contours on the image
-            cv.circle(imgVision, (int(ballX), int(ballY)), int(ballRadius), (0, 255, 0), 2) #ball
-            #cv.rectangle(img,(tapeX,tapeY),(tapeX+tapeW,tapeY+tapeH),(100,0,255),1) #floor tape
-            #cv.rectangle(imgVision,(visionTargetX,visionTargetY),(visionTargetX+visionTargetW,visionTargetY+visionTargetH),(0,255,0),2) #vision targets
-            #cv.putText(imgVision, 'Distance to Vision: %.2f' %visionTargetDistance, (10, 400), cv.FONT_HERSHEY_SIMPLEX, .75,(0, 255, 0), 2)
-            #cv.putText(imgVision, 'Angle to Vision: %.2f' %visionTargetAngle, (10, 440), cv.FONT_HERSHEY_SIMPLEX, .75,(0, 255, 0), 2)
-            cv.putText(imgVision, 'Distance to Ball: %.2f' %ballDistance, (320, 400), cv.FONT_HERSHEY_SIMPLEX, .75,(0, 0, 255), 2)
-            cv.putText(imgVision, 'Angle to Ball: %.2f' %ballAngle, (320, 440), cv.FONT_HERSHEY_SIMPLEX, .75,(0, 0, 255), 2)
+            if foundBall == True:
+                cv.circle(imgVision, (int(ballX), int(ballY)), int(ballRadius), (0, 255, 0), 2) #ball
+                cv.putText(imgVision, 'Distance to Ball: %.2f' %ballDistance, (320, 400), cv.FONT_HERSHEY_SIMPLEX, .75,(0, 0, 255), 2)
+                cv.putText(imgVision, 'Angle to Ball: %.2f' %ballAngle, (320, 440), cv.FONT_HERSHEY_SIMPLEX, .75,(0, 0, 255), 2)                
+            if foundTape == True:
+                cv.rectangle(imgVision,(tapeX,tapeY),(tapeX+tapeW,tapeY+tapeH),(100,0,255),1) #floor tape
+            if foundVisionTarget == True:
+                cv.rectangle(imgVision,(visionTargetX,visionTargetY),(visionTargetX+visionTargetW,visionTargetY+visionTargetH),(0,255,0),2) #vision targets
+                cv.putText(imgVision, 'Distance to Vision: %.2f' %visionTargetDistance, (10, 400), cv.FONT_HERSHEY_SIMPLEX, .75,(0, 255, 0), 2)
+                cv.putText(imgVision, 'Angle to Vision: %.2f' %visionTargetAngle, (10, 440), cv.FONT_HERSHEY_SIMPLEX, .75,(0, 255, 0), 2)
+
+            #Put timestamp on image
             cv.putText(imgVision, str(datetime.datetime.now()), (10, 30), cv.FONT_HERSHEY_SIMPLEX, .5, (0, 0, 255), 2)
 
-        #Update navx network table here
+        #Update navx network table
+        if networkTablesConnected == True:
+            navxTable.putNumber("GyroAngle", round(vmx.getAHRS().GetAngle(), 2))
+            navxTable.putNumber("GyroYaw", round(vmx.getAHRS().GetYaw(), 2))
+            navXTable.putNumber("GyroPitch", round(vmx.getAHRS().GetPitch(), 2))
+            navxTable.putNumber("YVelocity", round(vmx.getAHRS().GetVelocityY(), 4))
+            navxTable.putNumber("XVelocity", round(vmx.getAHRS().GetVelocityX(), 4))
+            navxTable.putNumber("YDisplacement", round(vmx.getAHRS().GetDisplacementY(), 4))
+            navxTable.putNumber("XDisplacement", round(vmx.getAHRS().GetDisplacementX(), 4))
+            navxTable.putNumber("YVelocity", round(vmx.getAHRS().GetVelocityY(), 4))
+            navxTable.putNumber("XVelocity", round(vmx.getAHRS().GetVelocityX(), 4))
+            navxTable.putNumber("YAccel", round(vmx.getAHRS().GetWorldLinearAccelY(), 4))
+            navxTable.putNumber("XAccel", round(vmx.getAHRS().GetWorldLinearAccelX(), 4))
+            
 
+        #Add crosshairs to driver screen
+        if driverCameraConnected == True:
+            lineLength = 30
+            cv.line(imgDriver, (int(imgWidthDriver/2), int(imgHeightDriver/2 - lineLength)), (int(imgWidthDriver/2), int(imgHeightDriver/2 + lineLength)), (0, 0, 0), 1)
+            cv.line(imgDriver, (int(imgWidthDriver/2 - lineLength), int(imgHeightDriver/2)), (int(imgWidthDriver/2 + lineLength), int(imgHeightDriver/2)), (0, 0, 0), 1)
+            cv.circle(imgDriver, (int(imgWidthDriver/2), int(imgHeightDriver/2)), 10, (0, 0, 0), 1)
+        
         #Send driver camera to dashboard
-        driverOutputStream.putFrame(imgDriver)
+        if driverCameraConnected == True:
+            driverOutputStream.putFrame(imgDriver)
 
         #Write processed image to file
-        if writeVideo:
+        if (writeVideo == True) and (visionCameraConnected == True):
             visionImageOut.write(imgVision)
 
         #Display the two camera streams (for testing only)
-        cv.imshow("Vision", imgVision)
-        cv.imshow("Driver", imgDriver)
+        #cv.imshow("Vision", imgVision)
+        #cv.imshow("Driver", imgDriver)
+
+        #Check for gyro re-zero
+        gyroInit = navxTable.getNumber("ZeroGyro", 0)
+        if gyroInit == 1:
+            vmx.getAHRS().Reset()
+            vmx.getAHRS().ZeroYaw()
+            navxTable.putNumber("ZeroGyro", 0)
+
+        #Check for displacement zero
+        #dispInit = navxTable.getNumber("ZeroDisplace", 0)
+        #if dispInit == 1:
+        #    vmx.getAHRS().ResetDisplacement()
+        #    navxTable.putNumber("ZeroDisplace", 0)
         
         #Check for stop code from robot or keyboard (for testing)
-        if cv.waitKey(1) == 27:
-            break
-        #robotStop = visionTable.getNumber("RobotStop", 0)
-        #if robotStop == 1:
+        #if cv.waitKey(1) == 27:
         #    break
+        robotStop = visionTable.getNumber("RobotStop", 0)
+        if (robotStop == 1) or (driverCameraConnected == False) or (visionCameraConnected == False) or (networkTablesConnected == False):
+            break
 
 
     #Close all open windows (for testing)
-    cv.destroyAllWindows()
+    #cv.destroyAllWindows()
 
     #Close video file
     visionImageOut.release()
