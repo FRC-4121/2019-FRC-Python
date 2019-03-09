@@ -69,10 +69,10 @@ imgHeightVision = 240
 imgWidthDriver = 160
 imgHeightDriver = 120
 cameraFieldOfView = 27.3
-framesPerSecond = 30
 
 #Define program control flags
 writeVideo = True
+sendVisionToDashboard = False
 
 #Define image processing method
 def process_image(imgRaw, hsvMin, hsvMax):
@@ -100,7 +100,7 @@ def detect_ball_target(imgRaw):
 
     #Define constraints for ball detection
     ballRadius = 6.5 #in inches
-    minRadius = 10 #in pixels, this can be tweaked as needed
+    minRadius = 50 #in pixels, this can be tweaked as needed
 
     #Define the lower and upper boundaries of the "green"
     #ball in the HSV color space
@@ -112,13 +112,10 @@ def detect_ball_target(imgRaw):
     targetX = -1 #px
     targetY = -1 #px
     distanceToBall = -1 #inches
-    angleToBall = 1000 #degrees
-    ballOffset = 1000
+    angleToBall = -1000 #degrees
+    ballOffset = -1000
     screenPercent = -1
     foundBall = False;
-
-    largestArea = 0
-    largestContour = np.zeros((2, 2))
 
     #Find contours in the mask and clean up the return style from OpenCV
     ballContours = process_image(imgRaw, ballHSVMin, ballHSVMax)
@@ -129,53 +126,32 @@ def detect_ball_target(imgRaw):
         ballContours = ballContours[1]
 
     #Only proceed if at least one contour was found
-    #if len(ballContours) > 0:
+    if len(ballContours) > 0:
+ 
+        largestContour = max(ballContours, key=cv.contourArea)
+        ((x, y), radius) = cv.minEnclosingCircle(largestContour)
 
-    for testContour in ballContours:
-
-        testArea = cv.contourArea(testContour)
-        ((x, y), radius) = cv.minEnclosingCircle(testContour)
-        
-        cv.circle(imgRaw, (int(x), int(y)), int(radius), (0, 0, 255), 2)
-        
-        #if testArea > largestArea:
-
-       
-        largestArea = testArea
-        
         if radius > minRadius:
-            cv.circle(imgRaw, (int(x), int(y)), int(radius), (0, 255, 0), 2)
 
-            largestContour = testContour
+            targetRadius = radius
             targetX = x
             targetY = y
-            targetRadius = radius
             foundBall = True
-        
-    #largestContour = max(ballContours, key=cv.contourArea)
-    #((x, y), radius) = cv.minEnclosingCircle(largestContour)
 
-##        if radius > minRadius:
-##
-##            targetRadius = radius
-##            targetX = x
-##            targetY = y
-##            foundBall = True
-
-    #Distance and angle offset calculations
-    if targetRadius > 0:
-        
-        inches_per_pixel = ballRadius/targetRadius #set up a general conversion factor
-        distanceToBall = inches_per_pixel * (imgWidthDriver / (2 * math.tan(math.radians(cameraFieldOfView))))
-        offsetInInches = inches_per_pixel * (targetX - imgWidthDriver / 2)
-        angleToBall = math.degrees(math.atan((offsetInInches / distanceToBall)))
-        screenPercent = cv.contourArea(largestContour) / (imgWidthDriver * imgHeightDriver)
-        ballOffset = imgWidthDriver/2 - targetX
-      
-    else:
-        
-        distanceToBall = -1
-        angleToBall = 1000
+        #Distance and angle offset calculations
+        if targetRadius > 0:
+            
+            inches_per_pixel = ballRadius/targetRadius #set up a general conversion factor
+            distanceToBall = inches_per_pixel * (imgWidthVision / (2 * math.tan(math.radians(cameraFieldOfView))))
+            offsetInInches = inches_per_pixel * (targetX - imgWidthVision / 2)
+            angleToBall = math.degrees(math.atan((offsetInInches / distanceToBall)))
+            screenPercent = cv.contourArea(largestContour) / (imgWidthVision * imgHeightVision)
+            ballOffset = imgWidthVision/2 - targetX
+          
+        else:
+            
+            distanceToBall = -1
+            angleToBall = float('nan')
 
     return targetX, targetY, targetRadius, distanceToBall, angleToBall, ballOffset, screenPercent, foundBall
 
@@ -197,7 +173,7 @@ def detect_floor_tape(imgRaw):
     targetY = -1
     targetW = -1
     targetH = -1
-    centerOffset = 1000
+    centerOffset = float('nan')
     foundTape = False
     
     #Find alignment tape in image
@@ -231,8 +207,8 @@ def detect_vision_targets(imgRaw):
 
     #Define HSV range for cargo ship vision targets
     #values with light in Fab Lab
-    visionTargetHSVMin = (52, 198, 20)
-    visionTargetHSVMax = (78, 242, 255)
+    visionTargetHSVMin = (77, 131, 73)
+    visionTargetHSVMax = (96, 255, 255)
     #values from image testing
     #visionTargetHSVMin = (63, 0, 87)
     #visionTargetHSVMax = (108, 255, 255)
@@ -256,7 +232,7 @@ def detect_vision_targets(imgRaw):
     targetH = -1
     centerOffset = 1000
     distanceToVisionTarget = -1
-    angleToVisionTarget = 1000
+    angleToVisionTarget = 1000 #default set to not-a-number
     foundVisionTarget = False
 
     #Find contours in mask
@@ -353,11 +329,12 @@ def main():
     global imgHeightDriver
     global imgWidthVision
     global imgHeightVision
-    global framesPerSecond
 
     #Define local variables
     driverCameraBrightness = 50
     visionCameraBrightness = 0
+    driverFramesPerSecond = 15
+    visionFramesPerSecond = 30
 
     #Define local flags
     networkTablesConnected = False
@@ -422,6 +399,7 @@ def main():
         driverCamera = camserv.startAutomaticCapture(name = "DriverCamera", path=driverCameraPath)
         driverCamera.setResolution(imgWidthDriver, imgHeightDriver)
         driverCamera.setBrightness(driverCameraBrightness)
+        driverCamera.setFPS(driverFramesPerSecond)
         driverCameraConnected = True
         log_file.write('Connected to driver camera on ID = 0.\n')
     except:
@@ -431,30 +409,38 @@ def main():
 
     try:
         visionCameraPath = '/dev/v4l/by-path/platform-3f980000.usb-usb-0:1.4:1.0-video-index0'
-        visionCamera = camserv.startAutomaticCapture(name="VisionCamera", path=visionCameraPath)
+        visionCamera = cs.UsbCamera(name="VisionCamera", path=visionCameraPath)
         visionCamera.setResolution(imgWidthVision, imgHeightVision)
         visionCamera.setBrightness(visionCameraBrightness)
+        visionCamera.setFPS(visionFramesPerSecond)
         visionCameraConnected = True
     except:
         log_file.write('Error:  Unable to connect to vision camera.\n')
         log_file.write('Error message: ', sys.exec_info()[0])
         log_file.write('\n')        
 
-    #Define video sink
+    #Define vision video sink
     if driverCameraConnected == True:
         driverSink = camserv.getVideo(name = 'DriverCamera')
     if visionCameraConnected == True:
-        visionSink = camserv.getVideo(name = 'VisionCamera')
+        visionSink = cs.CvSink(name = 'VisionCamera')
+        visionSink.setSource(visionCamera)
 
-    #Create an output video stream
-    driverOutputStream = camserv.putVideo("DriveCamera", imgWidthDriver, imgHeightDriver)
+    #Define output stream for driver camera images
+    if (driverCameraConnected == True):
+        driverOutputStream = camserv.putVideo("DriveCamera", imgWidthDriver, imgHeightDriver)
+        
+    #Define output stream for processed vision images (for testing only!)
+    if (visionCameraConnected == True):
+        visionOutputStream = camserv.putVideo("VisionCamera", imgWidthVision, imgHeightVision)
 
     #Set video codec and create VideoWriter
-    fourcc = cv.VideoWriter_fourcc(*'XVID')
-    videoFilename = '/data/Match_Videos/RobotVisionCam-' + timeString + '.avi'
-    visionImageOut = cv.VideoWriter(videoFilename,fourcc,20.0,(imgWidthVision,imgHeightVision))
+    if writeVideo == True:
+        fourcc = cv.VideoWriter_fourcc(*'XVID')
+        videoFilename = '/data/Match_Videos/RobotVisionCam-' + timeString + '.mp4'
+        visionImageOut = cv.VideoWriter(videoFilename,fourcc,visionFramesPerSecond,(imgWidthVision,imgHeightVision))
 
-    #Create blank image
+    #Create blank vision image
     imgDriver= np.zeros(shape=(imgWidthDriver, imgHeightDriver, 3), dtype=np.uint8)
     imgVision= np.zeros(shape=(imgWidthVision, imgHeightVision, 3), dtype=np.uint8)
 
@@ -466,11 +452,10 @@ def main():
         #if img is None:
         #    break
 
-        #Initialize video time stamps
-        driverVideoTimestamp = 0
+        #Initialize video time stamp
         visionVideoTimestamp = 0
         
-        #Grab frames from the web cameras
+        #Grab frames from the vision web camera
         if driverCameraConnected == True:
             driverVideoTimestamp, imgDriver = driverSink.grabFrame(imgDriver)
         if visionCameraConnected == True:
@@ -478,24 +463,23 @@ def main():
 
         #Check for frame errors
         visionFrameGood = True
-        if (driverVideoTimestamp == 0) or (visionVideoTimestamp == 0):
-            print(str(driverVideoTimestamp))
-            if (driverVideoTimestamp == 0) and (driverCameraConnected == True):
-                log_file.write('Driver video error: \n')
-                log_file.write(driverSink.getError())
-                log_file.write('\n')
-            if (visionVideoTimestamp == 0) and (visionCameraConnected == True):
-                log_file.write('Vision video error: \n')
-                log_file.write(visionSink.getError())
-                log_file.write('\n')
-                visionFrameGood = False
-            sleep (float(framesPerSecond * 2) / 1000.0)
-            continue    
-        
+        if (visionVideoTimestamp == 0) and (visionCameraConnected == True):
+            log_file.write('Vision video error: \n')
+            log_file.write(visionSink.getError())
+            log_file.write('\n')
+            visionFrameGood = False
+            sleep (float(visionFramesPerSecond * 2) / 1000.0)
+            continue
+
+        #Put driver frame in output stream
+        if (driverCameraConnected == True):
+            driverOutputStream.putFrame(imgDriver)
+
+        #Continue processing if we have no errors
         if (visionFrameGood == True):
 
             #Call detection methods
-            ballX, ballY, ballRadius, ballDistance, ballAngle, ballOffset, ballScreenPercent, foundBall = detect_ball_target(imgDriver)
+            ballX, ballY, ballRadius, ballDistance, ballAngle, ballOffset, ballScreenPercent, foundBall = detect_ball_target(imgVision)
             #tapeX, tapeY, tapeW, tapeH, tapeOffset, foundTape = detect_floor_tape(imgVision)
             visionTargetX, visionTargetY, visionTargetW, visionTargetH, visionTargetDistance, visionTargetAngle, visionTargetOffset, foundVisionTarget = detect_vision_targets(imgVision)
 
@@ -504,7 +488,7 @@ def main():
 
                 visionTable.putNumber("RobotStop", 0)
                 visionTable.putBoolean("WriteVideo", writeVideo)
-                
+
                 visionTable.putNumber("BallX", round(ballX, 2))
                 visionTable.putNumber("BallY", round(ballY, 2))
                 visionTable.putNumber("BallRadius", round(ballRadius, 2))
@@ -513,21 +497,26 @@ def main():
                 visionTable.putNumber("BallOffset", round(ballOffset, 2))
                 visionTable.putNumber("BallScreenPercent", round(ballScreenPercent, 2))
                 visionTable.putBoolean("FoundBall", foundBall)
-                log_file.write('Cargo found at %s.\n' % datetime.datetime.now())
-                log_file.write('  Ball distance: %.2f \n' % round(ballDistance, 2))
-                log_file.write('  Ball angle: %.2f \n' % round(ballAngle, 2))
-                log_file.write('  Ball offset: %.2f \n' % round(ballOffset, 2))
-                log_file.write('\n')
+                
+                if foundBall == True:
+                    
+                    log_file.write('Cargo found at %s.\n' % datetime.datetime.now())
+                    log_file.write('  Ball distance: %.2f \n' % round(ballDistance, 2))
+                    log_file.write('  Ball angle: %.2f \n' % round(ballAngle, 2))
+                    log_file.write('  Ball offset: %.2f \n' % round(ballOffset, 2))
+                    log_file.write('\n')
 
-##                visionTable.putNumber("TapeX", round(tapeX, 2))
-##                visionTable.putNumber("TapeY", round(tapeY, 2))
-##                visionTable.putNumber("TapeW", round(tapeW, 2))
-##                visionTable.putNumber("TapeH", round(tapeH, 2))
-##                visionTable.putNumber("TapeOffset", round(tapeOffset, 2))
-##                visionTable.putBoolean("FoundTape", foundTape)
-##                log_file.write('Floor tape found at %s.\n' % datetime.datetime.now())
-##                log_file.write('  Tape offset: %.2f \n' % round(tapeOffset, 2))
-##                log_file.write('\n')
+                if foundTape == True:
+                    visionTable.putNumber("TapeX", round(tapeX, 2))
+                    visionTable.putNumber("TapeY", round(tapeY, 2))
+                    visionTable.putNumber("TapeW", round(tapeW, 2))
+                    visionTable.putNumber("TapeH", round(tapeH, 2))
+                    visionTable.putNumber("TapeOffset", round(tapeOffset, 2))
+                    visionTable.putBoolean("FoundTape", foundTape)
+                    log_file.write('Floor tape found at %s.\n' % datetime.datetime.now())
+                    log_file.write('  Tape offset: %.2f \n' % round(tapeOffset, 2))
+                    log_file.write('\n')
+
 
                 visionTable.putNumber("VisionTargetX", round(visionTargetX, 2))
                 visionTable.putNumber("VisionTargetY", round(visionTargetY, 2))
@@ -537,17 +526,20 @@ def main():
                 visionTable.putNumber("VisionTargetAngle", round(visionTargetAngle, 2))
                 visionTable.putNumber("VisionTargetOffset", round(visionTargetOffset, 2))
                 visionTable.putBoolean("FoundVisionTarget", foundVisionTarget)
-                log_file.write('Vision target found at %s.\n' % datetime.datetime.now())
-                log_file.write('  Vision target distance: %.2f \n' % round(visionTargetDistance, 2))
-                log_file.write('  Vision target angle: %.2f \n' % round(visionTargetAngle, 2))
-                log_file.write('  Vision target offset: %.2f \n' % round(visionTargetOffset, 2))
-                log_file.write('\n')
+
+                if foundVisionTarget == True:
+                    
+                    log_file.write('Vision target found at %s.\n' % datetime.datetime.now())
+                    log_file.write('  Vision target distance: %.2f \n' % round(visionTargetDistance, 2))
+                    log_file.write('  Vision target angle: %.2f \n' % round(visionTargetAngle, 2))
+                    log_file.write('  Vision target offset: %.2f \n' % round(visionTargetOffset, 2))
+                    log_file.write('\n')
 
             #Draw various contours on the image
             if foundBall == True:
-                cv.circle(imgDriver, (int(ballX), int(ballY)), int(ballRadius), (0, 255, 0), 2) #ball
-            #    cv.putText(imgVision, 'Distance to Ball: %.2f' %ballDistance, (320, 400), cv.FONT_HERSHEY_SIMPLEX, .75,(0, 0, 255), 2)
-            #    cv.putText(imgVision, 'Angle to Ball: %.2f' %ballAngle, (320, 440), cv.FONT_HERSHEY_SIMPLEX, .75,(0, 0, 255), 2)                
+                cv.circle(imgVision, (int(ballX), int(ballY)), int(ballRadius), (0, 255, 0), 2) #ball
+                cv.putText(imgVision, 'Distance to Ball: %.2f' %ballDistance, (320, 400), cv.FONT_HERSHEY_SIMPLEX, .75,(0, 0, 255), 2)
+                cv.putText(imgVision, 'Angle to Ball: %.2f' %ballAngle, (320, 440), cv.FONT_HERSHEY_SIMPLEX, .75,(0, 0, 255), 2)                
             if foundTape == True:
                 cv.rectangle(imgVision,(tapeX,tapeY),(tapeX+tapeW,tapeY+tapeH),(100,0,255),1) #floor tape
             if foundVisionTarget == True:
@@ -571,26 +563,20 @@ def main():
             navxTable.putNumber("XVelocity", round(vmx.getAHRS().GetVelocityX(), 4))
             navxTable.putNumber("YAccel", round(vmx.getAHRS().GetWorldLinearAccelY(), 4))
             navxTable.putNumber("XAccel", round(vmx.getAHRS().GetWorldLinearAccelX(), 4))
+
+        #Check vision network table dashboard value
+        sendVisionToDashboard = visionTable.getNumber("SendVision", 0)
+
+        #Send vision to dashboard (for testing)
+        if (visionCameraConnected == True) and (sendVisionToDashboard == 1):
+            visionOutputStream.putFrame(imgVision)
             
-
-        #Add crosshairs to driver screen
-##        if driverCameraConnected == True:
-##            lineLength = 30
-##            cv.line(imgDriver, (int(imgWidthDriver/2), int(imgHeightDriver/2 - lineLength)), (int(imgWidthDriver/2), int(imgHeightDriver/2 + lineLength)), (0, 0, 0), 1)
-##            cv.line(imgDriver, (int(imgWidthDriver/2 - lineLength), int(imgHeightDriver/2)), (int(imgWidthDriver/2 + lineLength), int(imgHeightDriver/2)), (0, 0, 0), 1)
-##            cv.circle(imgDriver, (int(imgWidthDriver/2), int(imgHeightDriver/2)), 10, (0, 0, 0), 1)
-        
-        #Send driver camera to dashboard
-        if driverCameraConnected == True:
-            driverOutputStream.putFrame(imgDriver)
-
         #Write processed image to file
         if (writeVideo == True) and (visionCameraConnected == True):
             visionImageOut.write(imgVision)
 
-        #Display the two camera streams (for testing only)
-        cv.imshow("Vision", imgVision)
-        cv.imshow("Driver", imgDriver)
+        #Display the vision camera stream (for testing only)
+        #cv.imshow("Vision", imgVision)
 
         #Check for gyro re-zero
         gyroInit = navxTable.getNumber("ZeroGyro", 0)
@@ -606,10 +592,10 @@ def main():
         #    navxTable.putNumber("ZeroDisplace", 0)
         
         #Check for stop code from robot or keyboard (for testing)
-        if cv.waitKey(1) == 27:
-            break
+        #if cv.waitKey(1) == 27:
+        #    break
         robotStop = visionTable.getNumber("RobotStop", 0)
-        if (robotStop == 1) or (driverCameraConnected == False) or (visionCameraConnected == False) or (networkTablesConnected == False):
+        if (robotStop == 1) or (visionCameraConnected == False) or (networkTablesConnected == False):
             break
 
 
